@@ -68,6 +68,10 @@ GEOSITE_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/dow
 BACKUP_DIR="${DAE_DATA_DIR}/backup"
 TEMP_DIR="/tmp/dae-geodata-$$"
 
+# curl 超时设置（秒）
+CURL_TIMEOUT=60
+CURL_CONNECT_TIMEOUT=30
+
 # 日志函数
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -87,7 +91,7 @@ log_step() {
 
 # 检查必要工具
 check_dependencies() {
-    if ! command -v curl &> /dev/null; then
+    if ! command -v curl > /dev/null 2>&1; then
         log_error "缺少 curl 工具"
         exit 1
     fi
@@ -111,50 +115,7 @@ backup_existing_files() {
         cp "${DAE_DATA_DIR}/geosite.dat" "${BACKUP_DIR}/geosite.dat.${backup_timestamp}"
 }
 
-# 下载文件
-download_and_verify_file() {
-    local url=$1
-    local output=$2
-    local name=$3
-    local sha256_url="${url}.sha256sum"
-    local sha256_file="${output}.sha256sum"
-    
-    log_info "正在下载 ${name}..."
-    
-    if ! curl -L --retry 3 --retry-delay 5 -f -o "${output}" "${url}"; then
-        log_error "${name} 下载失败"
-        return 1
-    fi
-    
-    local file_size=$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null)
-    if [[ $file_size -lt 1000 ]]; then
-        log_error "${name} 文件大小异常"
-        return 1
-    fi
-    
-    log_info "正在下载 ${name} SHA256 校验文件..."
-    if ! curl -L --retry 3 --retry-delay 5 -f -o "${sha256_file}" "${sha256_url}"; then
-        log_warn "${name} SHA256 校验文件下载失败，跳过校验"
-        return 0
-    fi
-    
-    log_info "正在验证 ${name} SHA256..."
-    local expected_hash=$(cat "${sha256_file}" | awk '{print $1}')
-    local actual_hash=$(sha256sum "${output}" | awk '{print $1}')
-    
-    if [[ "$expected_hash" == "$actual_hash" ]]; then
-        log_info "${name} SHA256 校验通过"
-        rm -f "${sha256_file}"
-        return 0
-    else
-        log_error "${name} SHA256 校验失败"
-        log_error "期望: ${expected_hash}"
-        log_error "实际: ${actual_hash}"
-        rm -f "${output}" "${sha256_file}"
-        return 1
-    fi
-}
-
+# 检查文件是否需要更新（比较SHA256）
 check_file_needs_update() {
     local target_file=$1
     local sha256_url=$2
@@ -166,13 +127,23 @@ check_file_needs_update() {
     fi
     
     local temp_sha256="${TEMP_DIR}/${name}.sha256sum"
-    if ! curl -L --retry 3 --retry-delay 5 -f -o "${temp_sha256}" "${sha256_url}" 2>/dev/null; then
+    log_info "正在获取 ${name} 远程 SHA256..."
+    
+    if ! curl -L --connect-timeout $CURL_CONNECT_TIMEOUT --max-time $CURL_TIMEOUT \
+         --retry 2 --retry-delay 3 -f -s -o "${temp_sha256}" "${sha256_url}" 2>/dev/null; then
         log_warn "无法获取 ${name} 远程 SHA256，将强制更新"
         return 0
     fi
     
-    local remote_hash=$(cat "${temp_sha256}" | awk '{print $1}')
-    local local_hash=$(sha256sum "${target_file}" | awk '{print $1}')
+    local remote_hash=$(cat "${temp_sha256}" 2>/dev/null | awk '{print $1}' | head -1)
+    
+    if [[ -z "$remote_hash" ]]; then
+        log_warn "${name} SHA256 文件为空，将强制更新"
+        rm -f "${temp_sha256}"
+        return 0
+    fi
+    
+    local local_hash=$(sha256sum "${target_file}" 2>/dev/null | awk '{print $1}')
     
     rm -f "${temp_sha256}"
     
@@ -185,15 +156,86 @@ check_file_needs_update() {
     fi
 }
 
+# 下载文件并验证SHA256
+download_and_verify_file() {
+    local url=$1
+    local output=$2
+    local name=$3
+    local sha256_url="${url}.sha256sum"
+    local sha256_file="${output}.sha256sum"
+    
+    log_info "正在下载 ${name}..."
+    log_info "URL: ${url}"
+    
+    # 下载数据文件，带有进度条但无详细输出
+    if ! curl -L --connect-timeout $CURL_CONNECT_TIMEOUT --max-time $CURL_TIMEOUT \
+         --retry 3 --retry-delay 5 -f --progress-bar -o "${output}" "${url}"; then
+        log_error "${name} 下载失败"
+        [[ -f "${output}" ]] && rm -f "${output}"
+        return 1
+    fi
+    
+    # 验证文件大小
+    local file_size=$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null)
+    if [[ $file_size -lt 1000 ]]; then
+        log_error "${name} 文件大小异常 (${file_size} bytes)，可能下载不完整"
+        rm -f "${output}"
+        return 1
+    fi
+    
+    log_info "${name} 下载完成，文件大小: $(numfmt --to=iec-i --suffix=B $file_size 2>/dev/null || echo "$file_size bytes")"
+    
+    # 下载 SHA256 校验文件
+    log_info "正在下载 ${name} SHA256 校验文件..."
+    if ! curl -L --connect-timeout $CURL_CONNECT_TIMEOUT --max-time $CURL_TIMEOUT \
+         --retry 2 --retry-delay 3 -f -s -o "${sha256_file}" "${sha256_url}"; then
+        log_warn "${name} SHA256 校验文件下载失败，跳过验证"
+        return 0
+    fi
+    
+    # 验证 SHA256
+    log_info "正在验证 ${name} SHA256..."
+    local expected_hash=$(cat "${sha256_file}" 2>/dev/null | awk '{print $1}' | head -1)
+    
+    if [[ -z "$expected_hash" ]]; then
+        log_warn "${name} SHA256 值为空，跳过验证"
+        rm -f "${sha256_file}"
+        return 0
+    fi
+    
+    local actual_hash=$(sha256sum "${output}" | awk '{print $1}')
+    
+    if [[ "$expected_hash" == "$actual_hash" ]]; then
+        log_info "${name} SHA256 校验通过 ✓"
+        rm -f "${sha256_file}"
+        return 0
+    else
+        log_error "${name} SHA256 校验失败"
+        log_error "期望: ${expected_hash}"
+        log_error "实际: ${actual_hash}"
+        rm -f "${output}" "${sha256_file}"
+        return 1
+    fi
+}
+
 # 更新 GeoIP
 update_geoip() {
     local temp_file="${TEMP_DIR}/geoip.dat"
     local target_file="${DAE_DATA_DIR}/geoip.dat"
+    local sha256_url="${GEOIP_URL}.sha256sum"
     
-    if download_file "$GEOIP_URL" "$temp_file" "GeoIP"; then
+    log_step "处理 GeoIP 文件..."
+    
+    # 检查是否需要更新
+    if ! check_file_needs_update "$target_file" "$sha256_url" "GeoIP"; then
+        return 0
+    fi
+    
+    # 下载并验证
+    if download_and_verify_file "$GEOIP_URL" "$temp_file" "GeoIP"; then
         mv "$temp_file" "$target_file"
         chmod 644 "$target_file"
-        log_info "GeoIP 已更新"
+        log_info "GeoIP 已成功更新"
         return 0
     fi
     return 1
@@ -203,11 +245,20 @@ update_geoip() {
 update_geosite() {
     local temp_file="${TEMP_DIR}/geosite.dat"
     local target_file="${DAE_DATA_DIR}/geosite.dat"
+    local sha256_url="${GEOSITE_URL}.sha256sum"
     
-    if download_file "$GEOSITE_URL" "$temp_file" "GeoSite"; then
+    log_step "处理 GeoSite 文件..."
+    
+    # 检查是否需要更新
+    if ! check_file_needs_update "$target_file" "$sha256_url" "GeoSite"; then
+        return 0
+    fi
+    
+    # 下载并验证
+    if download_and_verify_file "$GEOSITE_URL" "$temp_file" "GeoSite"; then
         mv "$temp_file" "$target_file"
         chmod 644 "$target_file"
-        log_info "GeoSite 已更新"
+        log_info "GeoSite 已成功更新"
         return 0
     fi
     return 1
@@ -215,9 +266,17 @@ update_geosite() {
 
 # 重载 dae 服务
 reload_dae() {
-    if command -v dae &> /dev/null && systemctl is-active --quiet dae; then
-        log_info "重载 dae 服务..."
-        systemctl reload dae || systemctl restart dae
+    if command -v dae > /dev/null 2>&1 && systemctl is-active --quiet dae 2>/dev/null; then
+        log_step "重载 dae 服务..."
+        if systemctl reload dae 2>/dev/null; then
+            log_info "dae 服务已重载"
+        elif systemctl restart dae 2>/dev/null; then
+            log_info "dae 服务已重启"
+        else
+            log_warn "dae 服务重载/重启失败"
+        fi
+    else
+        log_warn "dae 服务未运行或未安装，跳过重载"
     fi
 }
 
@@ -226,16 +285,21 @@ cleanup() {
     [[ -d "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
     
     # 保留最近5个备份
-    ls -t "${BACKUP_DIR}"/geoip.dat.* 2>/dev/null | tail -n +6 | xargs -r rm -f
-    ls -t "${BACKUP_DIR}"/geosite.dat.* 2>/dev/null | tail -n +6 | xargs -r rm -f
+    local geoip_old=$(ls -t "${BACKUP_DIR}"/geoip.dat.* 2>/dev/null | tail -n +6)
+    [[ -n "$geoip_old" ]] && echo "$geoip_old" | xargs rm -f
+    
+    local geosite_old=$(ls -t "${BACKUP_DIR}"/geosite.dat.* 2>/dev/null | tail -n +6)
+    [[ -n "$geosite_old" ]] && echo "$geosite_old" | xargs rm -f
 }
 
 # 主函数
 main() {
+    echo ""
     echo "=========================================="
     log_info "Dae GeoIP/GeoSite 自动更新"
     log_info "时间: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "=========================================="
+    echo ""
     
     trap cleanup EXIT
     
@@ -243,16 +307,24 @@ main() {
     create_directories
     backup_existing_files
     
-    local success=true
-    update_geoip || success=false
-    update_geosite || success=false
+    local geoip_success=true
+    local geosite_success=true
     
-    if [[ "$success" == true ]]; then
+    update_geoip || geoip_success=false
+    update_geosite || geosite_success=false
+    
+    echo ""
+    echo "=========================================="
+    
+    if [[ "$geoip_success" == true ]] || [[ "$geosite_success" == true ]]; then
         reload_dae
+        echo ""
         log_info "更新完成！"
+        echo "=========================================="
         exit 0
     else
         log_error "更新失败"
+        echo "=========================================="
         exit 1
     fi
 }
@@ -349,6 +421,8 @@ show_usage() {
     echo ""
     echo -e "${GREEN}数据文件位置：${NC}/usr/local/share/dae/"
     echo -e "${GREEN}备份文件位置：${NC}/usr/local/share/dae/backup/"
+    echo ""
+    echo -e "${YELLOW}提示：${NC}安装脚本 setup-geodata-update.sh 现在可以安全删除"
     echo ""
 }
 
