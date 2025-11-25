@@ -367,7 +367,6 @@ Description=Daily update of Dae GeoIP and GeoSite databases
 
 [Timer]
 # 每天早上 8:00 执行
-OnCalendar=daily
 OnCalendar=*-*-* 08:00:00
 Persistent=true
 
@@ -375,7 +374,7 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-    log_info "systemd timer 文件创建完成（每天早上8点执行）"
+    log_info "systemd timer 文件创建完成（每天早上 08:00 执行）"
 }
 
 # 启动服务
