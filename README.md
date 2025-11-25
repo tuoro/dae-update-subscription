@@ -1,17 +1,27 @@
-# Dae Subscription Auto-Update Script
+# Dae Auto-Update Scripts
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/tuoro/dae-update-subscription)](https://github.com/tuoro/dae-update-subscription/issues)
 
 ## 📋 Project Overview
 
-This script automates the configuration of **Dae** proxy tool's subscription update mechanism. Dae does not store subscription information natively and requires re-reading subscriptions on each startup. When subscription links are blocked or inaccessible, it fails to retrieve subscription and group configurations, affecting normal operation.
+This repository contains automated update scripts for **Dae** proxy tool:
 
-This script solves this problem by:
-- ✅ Storing subscription files locally (`.sub` format)
-- ✅ Periodically auto-updating subscription content
-- ✅ Automatic retry mechanism on failure
-- ✅ Systemd scheduled task management
+1. **Subscription Auto-Update** - Automatically updates and stores subscription configurations
+2. **GeoIP/GeoSite Auto-Update** - Automatically updates GeoIP and GeoSite database files
+
+### Why These Scripts?
+
+**Subscription Updates:**
+- Dae doesn't store subscription information natively
+- Requires re-reading subscriptions on each startup
+- When subscription links are blocked, configurations become inaccessible
+- Solution: Store subscriptions locally and update periodically
+
+**GeoIP/GeoSite Updates:**
+- Routing rules rely on up-to-date geographic data
+- Manual updates are tedious and error-prone
+- Solution: Automated daily updates with SHA256 verification
 
 ---
 
@@ -24,14 +34,14 @@ This script solves this problem by:
 ### Required Software
 | Component | Description | Check Method |
 |-----------|-------------|--------------|
-| **curl** | Used to download subscription files | `which curl` |
+| **curl** | Download files | `which curl` |
 | **systemd** | System daemon manager | `systemctl --version` |
-| **bash** | Shell script interpreter | `bash --version` |
+| **bash** | Shell interpreter | `bash --version` |
 | **dae** | Proxy tool (must be pre-installed) | `dae --version` |
 
 ### Permission Requirements
 - Requires **root** privileges (use `sudo`)
-- Need read/write permissions for `/usr/local/etc/dae/` and `/usr/local/bin/` directories
+- Need read/write permissions for `/usr/local/etc/dae/` and `/usr/local/bin/`
 
 ---
 
@@ -48,401 +58,373 @@ sudo apt install -y curl systemd
 sudo yum install -y curl systemd
 ```
 
-### Verify Dependencies are Complete
-```bash
-# Check curl
-which curl && curl --version
-
-# Check systemd
-systemctl --version
-
-# Check dae
-dae --version
-
-# Check bash
-bash --version
-```
-
 ---
 
-## 🚀 Quick Start
+## 🚀 Feature 1: Subscription Auto-Update
 
-### Method 1: Direct Download and Run (Recommended)
+### Overview
+Automatically downloads and stores Dae subscription configurations locally, with periodic updates.
+
+### Quick Start
+
+#### Method 1: Direct Download (Recommended)
 ```bash
-# Download the script
+# Download and run
 curl -fsSL https://raw.githubusercontent.com/tuoro/dae-update-subscription/main/setup-dae-auto-update.sh -o setup-dae-auto-update.sh
-
-# Grant execute permission
 chmod +x setup-dae-auto-update.sh
-
-# Run with root privileges
 sudo ./setup-dae-auto-update.sh
 ```
 
-### Method 2: Clone Repository
+#### Method 2: Clone Repository
 ```bash
-# Clone the repository
 git clone https://github.com/tuoro/dae-update-subscription.git
-
-# Enter directory
 cd dae-update-subscription
-
-# Grant execute permission
 chmod +x setup-dae-auto-update.sh
-
-# Run script
 sudo ./setup-dae-auto-update.sh
 ```
 
-### Method 3: Manual Creation
-```bash
-# Create and edit file directly
-sudo nano setup-dae-auto-update.sh
+### Post-Installation Configuration
 
-# Paste script content from GitHub, then save (Ctrl+X → Y → Enter)
-
-# Grant execute permission
-chmod +x setup-dae-auto-update.sh
-
-# Run script
-sudo ./setup-dae-auto-update.sh
-```
-
----
-
-## ⚙️ Post-Installation Configuration
-
-After running the script, follow these steps:
-
-### Step 1: Edit Subscription List File
+#### Step 1: Edit Subscription List
 ```bash
 sudo nano /usr/local/etc/dae/sublist
 ```
 
-**File Format** (one subscription per line, format: `name:URL`):
+Format (one per line: `name:URL`):
 ```
 sub1:https://example.com/subscribe?token=abc123
 sub2:https://another-service.com/api/sub?key=xyz789
-sub3:https://third-provider.com/subscription?id=def456
 ```
 
-**Notes**:
-- Supports multiple subscription sources (sub1, sub2, sub3, etc.)
-- The name part will be used to generate corresponding `.sub` files
-- URL must be the complete subscription link
-- Remove lines starting with `#` (comments)
-
-### Step 2: Modify Dae Configuration File
+#### Step 2: Update Dae Config
 ```bash
 sudo nano /usr/local/etc/dae/config.dae
 ```
 
-**Find the `subscription` configuration block and modify it**:
+Modify the `subscription` block:
 ```yaml
 subscription {
-    # Modify according to subscription names in sublist
     sub1:'file://sub1.sub'
     sub2:'file://sub2.sub'
-    sub3:'file://sub3.sub'
 }
 ```
 
-**Important**: 
-- The names in file paths must exactly match those in `sublist`
-- Use single quotes around `file://` paths
-- Remove any existing HTTP/HTTPS subscription URLs
+### Schedule
+- **First run**: 15 minutes after system boot
+- **Regular updates**: Every 12 hours
 
-### Step 3: Verify Configuration
+### Common Commands
 ```bash
-# Check if sublist permissions are correct
-ls -l /usr/local/etc/dae/sublist
-# Output should display: -rw------- (600 permissions)
-
-# Verify sublist content
-cat /usr/local/etc/dae/sublist
-```
-
----
-
-## 🧪 Testing and Verification
-
-### Manually Run Subscription Update Once
-```bash
+# Manual update
 sudo systemctl start update-subs.service
-```
 
-### View Subscription Update Logs
-```bash
-# View logs in real-time
+# View logs
 sudo journalctl -u update-subs.service -f
 
-# View last 50 lines of logs
-sudo journalctl -u update-subs.service -n 50
+# Check timer status
+sudo systemctl status update-subs.timer
 
-# View logs for specific time range
-sudo journalctl -u update-subs.service --since "2 hours ago"
-```
-
-### Verify Subscription Files Were Generated
-```bash
-# Check if .sub files were generated
-ls -lh /usr/local/etc/dae/*.sub
-
-# View subscription file content (first 20 lines)
-cat /usr/local/etc/dae/sub1.sub | head -20
-```
-
-### Check if Dae Correctly Loaded Subscriptions
-```bash
-# View dae logs
-sudo journalctl -u dae -f
-
-# Or restart dae
-sudo systemctl restart dae
-
-# Check dae status
-sudo systemctl status dae
+# View next execution time
+sudo systemctl list-timers update-subs.timer
 ```
 
 ---
 
-## 🕐 Timer Configuration
+## 🌍 Feature 2: GeoIP/GeoSite Auto-Update
 
-The script automatically creates the following scheduling rules:
+### Overview
+Automatically downloads and updates GeoIP and GeoSite database files from official sources with SHA256 verification.
 
-| Trigger Condition | Description |
-|------------------|------------|
-| **15 minutes after system boot** | Initial auto-update of subscriptions |
-| **Every 12 hours thereafter** | Regular periodic auto-update |
+### Features
+- ✅ **SHA256 Verification**: Ensures file integrity before and after download
+- ✅ **Smart Updates**: Only downloads when new version available (compares SHA256)
+- ✅ **Automatic Backup**: Keeps last 5 versions of each file
+- ✅ **Auto Reload**: Automatically reloads Dae service after updates
+- ✅ **GitHub Official Source**: Uses Loyalsoldier/v2ray-rules-dat repository
 
-### Check Timer Status
-```bash
-# Check if timer is enabled and running
-sudo systemctl status update-subs.timer
-
-# View all scheduled tasks and next execution time
-sudo systemctl list-timers update-subs.timer
-
-# View detailed timer information
-sudo systemctl show update-subs.timer
-```
-
-### Manually Modify Timer Rules
-
-To change update frequency (e.g., update every 6 hours instead):
+### Quick Start
 
 ```bash
-# Edit timer configuration
-sudo nano /etc/systemd/system/update-subs.timer
+# Download and run
+curl -fsSL https://raw.githubusercontent.com/tuoro/dae-update-subscription/main/setup-geodata-update.sh -o setup-geodata-update.sh
+chmod +x setup-geodata-update.sh
+sudo ./setup-geodata-update.sh
 ```
 
-Modify the following section:
+### Schedule
+- **Daily execution**: Every day at 8:00 AM
+- **Persistent**: If system was off at scheduled time, runs immediately on boot
+
+### Data Sources (GitHub Official)
+- **GeoIP**: `https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat`
+- **GeoSite**: `https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat`
+
+### File Locations
+- **Data files**: `/usr/local/share/dae/`
+  - `geoip.dat` - IP geolocation database
+  - `geosite.dat` - Domain classification database
+- **Backups**: `/usr/local/share/dae/backup/`
+  - Automatic backups with timestamps
+  - Keeps last 5 versions of each file
+
+### Common Commands
+```bash
+# Manual update
+sudo systemctl start update-geodata.service
+
+# View logs
+sudo journalctl -u update-geodata.service -f
+
+# Check timer status
+sudo systemctl status update-geodata.timer
+
+# View next execution time
+sudo systemctl list-timers update-geodata.timer
+
+# View last 50 log lines
+sudo journalctl -u update-geodata.service -n 50
+```
+
+### Modify Update Time
+
+To change execution time (e.g., to 3:00 AM):
+
+```bash
+# Edit timer
+sudo nano /etc/systemd/system/update-geodata.timer
+```
+
+Change to:
 ```ini
 [Timer]
-OnBootSec=15min
-OnUnitActiveSec=6h        # Change to 6h (6 hours), 3h, 24h, etc.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
 ```
 
-Reload and restart:
+Reload:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart update-subs.timer
+sudo systemctl restart update-geodata.timer
 ```
+
+### Update Workflow
+
+```
+Update Process
+  ├── Check local file exists
+  ├── Download remote SHA256 checksum
+  ├── Compare with local file SHA256
+  │   ├── Match → Skip update (already latest)
+  │   └── Different → Proceed with download
+  ├── Download new file to temp directory
+  ├── Verify downloaded file SHA256
+  │   ├── Pass → Continue
+  │   └── Fail → Delete and exit with error
+  ├── Backup existing file (with timestamp)
+  ├── Replace with new file
+  ├── Set correct permissions (644)
+  ├── Reload Dae service
+  └── Clean up (temp files + old backups)
+```
+
+---
+
+## 📊 Script Comparison
+
+| Feature | Subscription Update | GeoData Update |
+|---------|-------------------|----------------|
+| **Purpose** | Update proxy subscriptions | Update routing databases |
+| **Update Frequency** | Every 12 hours | Daily at 8:00 AM |
+| **Data Source** | User-provided URLs | GitHub official releases |
+| **Verification** | File size check | SHA256 checksum |
+| **Smart Update** | No (always downloads) | Yes (only when changed) |
+| **Backup** | Yes (timestamped) | Yes (last 5 versions) |
+| **Service Reload** | Yes | Yes |
+| **File Location** | `/usr/local/etc/dae/` | `/usr/local/share/dae/` |
 
 ---
 
 ## 🔍 Troubleshooting
 
-### Issue 1: Script Execution Says "root privileges required"
+### Common Issues for Both Scripts
+
+#### Issue 1: "root privileges required"
 ```bash
-# Make sure to run script with sudo
-sudo ./setup-dae-auto-update.sh
+# Always use sudo
+sudo ./setup-xxx.sh
 ```
 
-### Issue 2: dae Not Detected
-```bash
-# Verify dae is properly installed
-dae --version
-
-# If not installed, please install dae first
-# Installation guide: https://github.com/daeuniverse/dae
-```
-
-### Issue 3: Subscription Update Failed
-```bash
-# View detailed error logs
-sudo journalctl -u update-subs.service -xe
-
-# Possible causes:
-# 1. Subscription link has expired or is invalid
-# 2. Network connectivity issues
-# 3. Firewall blocking outbound connections
-# 4. Subscription server temporarily unavailable
-
-# Manually test if subscription link is accessible
-curl -v "https://your-subscription-url"
-```
-
-### Issue 4: systemd timer Not Auto-starting
-```bash
-# Check if timer is enabled
-sudo systemctl list-unit-files | grep update-subs
-
-# Output should show "enabled"
-
-# If not enabled, manually enable it
-sudo systemctl enable update-subs.timer
-sudo systemctl start update-subs.timer
-```
-
-### Issue 5: Dae Cannot Read Local Subscription Files
-```bash
-# Check file permissions
-ls -l /usr/local/etc/dae/*.sub
-
-# Check file format
-file /usr/local/etc/dae/sub1.sub
-
-# Verify dae configuration syntax
-sudo dae validate
-```
-
-### Issue 6: Subscription File Permissions Incorrect
-```bash
-# Fix permissions (should be 0600)
-sudo chmod 0600 /usr/local/etc/dae/*.sub
-sudo chmod 0600 /usr/local/etc/dae/sublist
-
-# Verify ownership (should be root)
-sudo chown root:root /usr/local/etc/dae/*.sub
-sudo chown root:root /usr/local/etc/dae/sublist
-```
-
-### Issue 7: "curl: command not found"
+#### Issue 2: "curl: command not found"
 ```bash
 # Install curl
 sudo apt install curl      # Debian/Ubuntu
 sudo yum install curl      # CentOS/RHEL
 ```
 
----
+#### Issue 3: Timer not auto-starting
+```bash
+# Check if enabled
+sudo systemctl list-unit-files | grep update
 
-## 📊 How It Works
-
-### Installation Script Workflow
-```
-Script Execution
-  ├── Permission Check (root required)
-  ├── Software Check (dae, systemd, curl)
-  ├── Config Directory Creation (/usr/local/etc/dae)
-  ├── Config File Backup (with timestamp)
-  ├── Create Subscription Update Script (/usr/local/bin/update-dae-subs.sh)
-  ├── Create systemd Service (/etc/systemd/system/update-subs.service)
-  ├── Create systemd Timer (/etc/systemd/system/update-subs.timer)
-  ├── Create Subscription List Template (/usr/local/etc/dae/sublist)
-  ├── Reload systemd daemon
-  └── Enable and Start Timer
-       └── First run: 15 minutes after system boot
-       └── Recurring: Every 12 hours
+# Enable manually if needed
+sudo systemctl enable update-subs.timer
+sudo systemctl enable update-geodata.timer
 ```
 
-### Subscription Update Script Workflow
+### Subscription-Specific Issues
+
+#### Invalid subscription URL
+```bash
+# Test URL manually
+curl -v "https://your-subscription-url"
+
+# Check sublist format
+cat /usr/local/etc/dae/sublist
 ```
-update-dae-subs.sh Execution
-  ├── Enter Config Directory (/usr/local/etc/dae)
-  ├── Get dae Version Info
-  ├── Construct User-Agent Header
-  ├── Read sublist File
-  ├── For Each Subscription:
-  │   ├── Download via curl (3 retries, 5s delay)
-  │   ├── Save as .sub.new temporarily
-  │   ├── Verify Download Success
-  │   ├── Replace old .sub file
-  │   └── Set Permissions to 0600
-  ├── Execute 'dae reload' to Apply Changes
-  └── Exit with Success/Failure Status
+
+#### Dae not loading subscriptions
+```bash
+# Verify file permissions
+ls -l /usr/local/etc/dae/*.sub
+
+# Check Dae config syntax
+sudo dae validate
+```
+
+### GeoData-Specific Issues
+
+#### SHA256 verification failed
+```bash
+# Check logs for details
+sudo journalctl -u update-geodata.service -n 100
+
+# Manually test download
+curl -L https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/test-geoip.dat
+```
+
+#### Files not updating
+```bash
+# Check if already latest version
+sudo journalctl -u update-geodata.service | grep "已是最新版本"
+
+# Force update by removing local files
+sudo rm /usr/local/share/dae/geoip.dat
+sudo rm /usr/local/share/dae/geosite.dat
+sudo systemctl start update-geodata.service
 ```
 
 ---
 
 ## 📝 Created Files
 
-List of files created by the script:
-
+### Subscription Update Files
 | File Path | Permissions | Description |
 |-----------|------------|-------------|
-| `/usr/local/bin/update-dae-subs.sh` | 755 | Subscription update execution script |
-| `/etc/systemd/system/update-subs.service` | 644 | systemd service file |
-| `/etc/systemd/system/update-subs.timer` | 644 | systemd timer file |
-| `/usr/local/etc/dae/sublist` | 600 | Subscription link list (created as template) |
-| `/usr/local/etc/dae/*.sub` | 600 | Downloaded subscription files (auto-generated) |
-| `/usr/local/etc/dae/config.dae.backup.*` | 644 | Backup of original config file (if exists) |
+| `/usr/local/bin/update-dae-subs.sh` | 755 | Subscription update script |
+| `/etc/systemd/system/update-subs.service` | 644 | systemd service |
+| `/etc/systemd/system/update-subs.timer` | 644 | systemd timer |
+| `/usr/local/etc/dae/sublist` | 600 | Subscription URL list |
+| `/usr/local/etc/dae/*.sub` | 600 | Downloaded subscriptions |
+
+### GeoData Update Files
+| File Path | Permissions | Description |
+|-----------|------------|-------------|
+| `/usr/local/bin/update-dae-geodata.sh` | 755 | GeoData update script |
+| `/etc/systemd/system/update-geodata.service` | 644 | systemd service |
+| `/etc/systemd/system/update-geodata.timer` | 644 | systemd timer |
+| `/usr/local/share/dae/geoip.dat` | 644 | GeoIP database |
+| `/usr/local/share/dae/geosite.dat` | 644 | GeoSite database |
+| `/usr/local/share/dae/backup/` | 755 | Backup directory |
 
 ---
 
 ## 🔐 Security Recommendations
 
-1. **Permission Management**
-   - `sublist` file is set to `600` permissions (owner read/write only)
-   - `.sub` files are set to `600` permissions
-   - Subscription URLs typically contain tokens—do not share publicly
+1. **File Permissions**
+   - Subscription files: `600` (owner only)
+   - GeoData files: `644` (world-readable)
    - Never commit `sublist` to public repositories
 
-2. **Backup Strategy**
-   - Script automatically backs up config files with timestamps
-   - Backup file location: `/usr/local/etc/dae/`
-   - Periodically verify backup files are complete
-   - Keep at least 3 recent backups
-
-3. **Log Auditing**
-   - Regularly check systemd logs for errors
-   - Monitor failed subscription updates
-   - Set up alerts for repeated failures
-   - Review logs: `journalctl -u update-subs.service --since "7 days ago"`
-
-4. **Network Security**
-   - Ensure subscription URLs use HTTPS protocol
-   - Avoid using this script on unsecured networks
+2. **URL Security**
+   - Use HTTPS for all subscription URLs
    - Regularly rotate subscription tokens
-   - Use firewall rules to restrict outbound connections if needed
+   - Verify GeoData SHA256 checksums (automatic)
+
+3. **Backup Management**
+   - Subscription: Timestamped backups in `/usr/local/etc/dae/`
+   - GeoData: Last 5 versions in `/usr/local/share/dae/backup/`
+   - Periodically verify backups are valid
+
+4. **Log Monitoring**
+   ```bash
+   # Check for errors in last 7 days
+   sudo journalctl -u update-subs.service --since "7 days ago" | grep ERROR
+   sudo journalctl -u update-geodata.service --since "7 days ago" | grep ERROR
+   ```
 
 ---
 
-## 🔄 Uninstall or Reset
+## 🔄 Uninstall
 
-### Completely Remove Auto-update Feature
+### Remove Subscription Auto-Update
 ```bash
-# Stop and disable timer
 sudo systemctl stop update-subs.timer
 sudo systemctl disable update-subs.timer
-
-# Delete systemd files
-sudo rm /etc/systemd/system/update-subs.service
-sudo rm /etc/systemd/system/update-subs.timer
-
-# Delete update script
+sudo rm /etc/systemd/system/update-subs.{service,timer}
 sudo rm /usr/local/bin/update-dae-subs.sh
-
-# Reload systemd
 sudo systemctl daemon-reload
-
-# Optional: Remove subscription files
-sudo rm /usr/local/etc/dae/*.sub
-sudo rm /usr/local/etc/dae/sublist
 ```
 
-### Restore Configuration to Original State
+### Remove GeoData Auto-Update
 ```bash
-# View available backup files
-ls -la /usr/local/etc/dae/*.backup*
+sudo systemctl stop update-geodata.timer
+sudo systemctl disable update-geodata.timer
+sudo rm /etc/systemd/system/update-geodata.{service,timer}
+sudo rm /usr/local/bin/update-dae-geodata.sh
+sudo systemctl daemon-reload
+```
 
-# Restore from most recent backup
+### Restore Configurations
+```bash
+# View backups
+ls -la /usr/local/etc/dae/*.backup*
+ls -la /usr/local/share/dae/backup/
+
+# Restore from backup
 LATEST_BACKUP=$(ls -t /usr/local/etc/dae/config.dae.backup.* | head -1)
 sudo cp "$LATEST_BACKUP" /usr/local/etc/dae/config.dae
 
-# Restart dae
+# Restart Dae
 sudo systemctl restart dae
 ```
+
+---
+
+## 🤝 Frequently Asked Questions
+
+**Q: Can I run both scripts together?**  
+A: Yes! They are independent and designed to work alongside each other.
+
+**Q: Why use local subscription files?**  
+A: Prevents service disruption when subscription URLs are blocked or unavailable.
+
+**Q: How often should GeoIP/GeoSite be updated?**  
+A: Daily is sufficient. These databases update infrequently (weekly to monthly).
+
+**Q: What happens if SHA256 verification fails?**  
+A: The corrupted file is automatically deleted and the old version remains unchanged.
+
+**Q: Can I use different data sources for GeoIP/GeoSite?**  
+A: Yes, but you'll need to modify the URLs in `/usr/local/bin/update-dae-geodata.sh`.
+
+**Q: Will updates interrupt active connections?**  
+A: No. Dae reload is graceful and doesn't drop existing connections.
+
+**Q: Can I run on systems without systemd?**  
+A: No. These scripts specifically require systemd. For other init systems, you'd need to adapt the scheduling mechanism.
+
+**Q: How much disk space do backups use?**  
+A: Subscriptions: ~1-10 MB per backup. GeoData: ~10-20 MB per backup (5 versions kept).
 
 ---
 
@@ -450,36 +432,9 @@ sudo systemctl restart dae
 
 - [Dae Official Repository](https://github.com/daeuniverse/dae)
 - [Dae Documentation](https://github.com/daeuniverse/dae/wiki)
+- [Dae Installer](https://github.com/daeuniverse/dae-installer)
+- [Loyalsoldier GeoData](https://github.com/Loyalsoldier/v2ray-rules-dat)
 - [systemd Timer Documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)
-- [curl Manual](https://curl.se/docs/)
-
----
-
-## 🤝 Frequently Asked Questions
-
-**Q: Can the script run on macOS?**  
-A: No. macOS uses launchd instead of systemd. The script would need to be adapted to use launchd for scheduled tasks.
-
-**Q: Can I run multiple Dae instances simultaneously?**  
-A: Yes, but you need to configure separate configuration directories for each instance and modify the script paths accordingly.
-
-**Q: What subscription file size should I be concerned about performance?**  
-A: Most subscription files are 1-10 MB. Performance is typically not an issue unless files exceed 50 MB.
-
-**Q: How can I verify subscription content completeness?**  
-A: Check the `.sub` file's modification time and size with `ls -lh`, or review update logs with `journalctl`.
-
-**Q: Does it support authenticated subscription links (username/password)?**  
-A: Yes. You can include authentication info in the URL format: `https://user:pass@example.com/sub`
-
-**Q: Can I use different update intervals for different subscriptions?**  
-A: The current implementation updates all subscriptions together. To achieve different intervals, you would need to create separate services and timers.
-
-**Q: What happens if a subscription download fails?**  
-A: The script continues updating other subscriptions and marks the overall operation as failed. The old `.sub` file remains unchanged for failed downloads.
-
-**Q: Can I run this on a system without systemd?**  
-A: No, this script specifically requires systemd. For systems using other init systems (like OpenRC or runit), you would need to adapt the scheduling mechanism.
 
 ---
 
@@ -489,32 +444,34 @@ If you encounter problems:
 
 1. **Gather Information**
    ```bash
-   # System information
+   # System info
    uname -a
    
-   # Service logs
+   # Service logs (choose relevant service)
    sudo journalctl -u update-subs.service -n 100 --no-pager
+   sudo journalctl -u update-geodata.service -n 100 --no-pager
    
    # Timer status
    sudo systemctl status update-subs.timer
+   sudo systemctl status update-geodata.timer
    ```
 
 2. **Create an Issue**
    - Visit: https://github.com/tuoro/dae-update-subscription/issues
-   - Provide the information gathered above
-   - Include your configuration (with sensitive tokens removed)
-   - Describe the expected vs actual behavior
+   - Provide logs and system information
+   - Include configuration (remove sensitive tokens)
+   - Describe expected vs actual behavior
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes:
+Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
 ---
@@ -538,6 +495,6 @@ If this project helped you, please consider giving it a star! ⭐
 
 ---
 
-**Last Updated**: 2025-11-24  
-**Version**: 1.0.0  
+**Last Updated**: 2025-11-25  
+**Version**: 2.0.0  
 **Maintainer**: [@tuoro](https://github.com/tuoro)
