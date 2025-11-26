@@ -21,7 +21,7 @@ This repository contains automated update scripts for **Dae** proxy tool:
 **GeoIP/GeoSite Updates:**
 - Routing rules rely on up-to-date geographic data
 - Manual updates are tedious and error-prone
-- Solution: Automated daily updates with SHA256 verification
+- Solution: Automated daily updates with SHA256 verification and intelligent retry mechanism
 
 ---
 
@@ -70,7 +70,7 @@ Automatically downloads and stores Dae subscription configurations locally, with
 #### Method 1: Direct Download (Recommended)
 ```bash
 # Download and run
-curl -fsSL https://raw.githubusercontent.com/tuoro/dae-update-subscription/main/setup-dae-auto-update.sh -o setup-dae-auto-update.sh
+curl -L https://raw.githubusercontent.com/tuoro/dae-update-subscription/main/setup-dae-auto-update.sh -o setup-dae-auto-update.sh
 chmod +x setup-dae-auto-update.sh
 sudo ./setup-dae-auto-update.sh
 ```
@@ -133,20 +133,21 @@ sudo systemctl list-timers update-subs.timer
 ## 🌍 Feature 2: GeoIP/GeoSite Auto-Update
 
 ### Overview
-Automatically downloads and updates GeoIP and GeoSite database files from official sources with SHA256 verification.
+Automatically downloads and updates GeoIP and GeoSite database files from official sources with SHA256 verification and intelligent retry mechanism.
 
 ### Features
 - ✅ **SHA256 Verification**: Ensures file integrity before and after download
 - ✅ **Smart Updates**: Only downloads when new version available (compares SHA256)
-- ✅ **Automatic Backup**: Keeps last 5 versions of each file
+- ✅ **Intelligent Retry**: 5 retries with 10-second intervals for reliable downloads
 - ✅ **Auto Reload**: Automatically reloads Dae service after updates
 - ✅ **GitHub Official Source**: Uses Loyalsoldier/v2ray-rules-dat repository
+- ✅ **No Backup Clutter**: Lightweight with no backup file storage
 
 ### Quick Start
 
 ```bash
 # Download and run
-curl -fsSL https://raw.githubusercontent.com/tuoro/dae-update-subscription/main/setup-geodata-update.sh -o setup-geodata-update.sh
+curl -L https://raw.githubusercontent.com/tuoro/dae-update-subscription/main/setup-geodata-update.sh -o setup-geodata-update.sh
 chmod +x setup-geodata-update.sh
 sudo ./setup-geodata-update.sh
 ```
@@ -158,21 +159,27 @@ sudo ./setup-geodata-update.sh
 ### Data Sources (GitHub Official)
 - **GeoIP**: `https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat`
 - **GeoSite**: `https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat`
+- **SHA256 Checksums**: Automatically downloaded and verified
 
 ### File Locations
 - **Data files**: `/usr/local/share/dae/`
   - `geoip.dat` - IP geolocation database
   - `geosite.dat` - Domain classification database
-- **Backups**: `/usr/local/share/dae/backup/`
-  - Automatic backups with timestamps
-  - Keeps last 5 versions of each file
+
+### Retry Configuration
+```
+重试次数: 5 次
+重试间隔: 10 秒
+连接超时: 30 秒
+总超时时间: 120 秒
+```
 
 ### Common Commands
 ```bash
 # Manual update
 sudo systemctl start update-geodata.service
 
-# View logs
+# View logs in real-time
 sudo journalctl -u update-geodata.service -f
 
 # Check timer status
@@ -212,19 +219,20 @@ sudo systemctl restart update-geodata.timer
 ```
 Update Process
   ├── Check local file exists
-  ├── Download remote SHA256 checksum
+  ├── Download remote SHA256 checksum (with retry)
   ├── Compare with local file SHA256
   │   ├── Match → Skip update (already latest)
   │   └── Different → Proceed with download
-  ├── Download new file to temp directory
+  ├── Download new file with enhanced retry mechanism
+  │   ├── Retry up to 5 times on failure
+  │   ├── 10 second delay between retries
+  │   └── 120 second total timeout per attempt
   ├── Verify downloaded file SHA256
   │   ├── Pass → Continue
   │   └── Fail → Delete and exit with error
-  ├── Backup existing file (with timestamp)
   ├── Replace with new file
   ├── Set correct permissions (644)
-  ├── Reload Dae service
-  └── Clean up (temp files + old backups)
+  └── Reload Dae service
 ```
 
 ---
@@ -238,8 +246,10 @@ Update Process
 | **Data Source** | User-provided URLs | GitHub official releases |
 | **Verification** | File size check | SHA256 checksum |
 | **Smart Update** | No (always downloads) | Yes (only when changed) |
-| **Backup** | Yes (timestamped) | Yes (last 5 versions) |
-| **Service Reload** | Yes | Yes |
+| **Retry Mechanism** | Basic | Enhanced (5 retries, 10s interval) |
+| **Connection Timeout** | 30s | 30s |
+| **Total Timeout** | 60s | 120s |
+| **Backup** | Yes (timestamped) | No (lightweight) |
 | **File Location** | `/usr/local/etc/dae/` | `/usr/local/share/dae/` |
 
 ---
@@ -293,13 +303,36 @@ sudo dae validate
 
 ### GeoData-Specific Issues
 
+#### Download keeps failing despite retries
+```bash
+# Check detailed logs
+sudo journalctl -u update-geodata.service -n 100
+
+# Test network connectivity
+curl --connect-timeout 30 --max-time 120 -I https://github.com
+
+# Try manual download with same retry settings
+curl -L --connect-timeout 30 --max-time 120 --retry 5 --retry-delay 10 \
+  https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat \
+  -o /tmp/test-geoip.dat
+
+# Check if GitHub is accessible
+ping github.com
+```
+
 #### SHA256 verification failed
 ```bash
 # Check logs for details
-sudo journalctl -u update-geodata.service -n 100
+sudo journalctl -u update-geodata.service | grep "SHA256"
 
-# Manually test download
-curl -L https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat -o /tmp/test-geoip.dat
+# This usually indicates:
+# - Corrupted download (retry will handle)
+# - Incomplete transfer (extended timeout helps)
+# - Network issue during download (5 retries should resolve)
+
+# Manual verification
+curl -L https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat.sha256sum
+sha256sum /usr/local/share/dae/geoip.dat
 ```
 
 #### Files not updating
@@ -311,6 +344,18 @@ sudo journalctl -u update-geodata.service | grep "已是最新版本"
 sudo rm /usr/local/share/dae/geoip.dat
 sudo rm /usr/local/share/dae/geosite.dat
 sudo systemctl start update-geodata.service
+```
+
+#### Service fails immediately
+```bash
+# Check for syntax errors
+bash -n /usr/local/bin/update-dae-geodata.sh
+
+# Run manually to see detailed errors
+sudo /usr/local/bin/update-dae-geodata.sh
+
+# Check systemd service status
+sudo systemctl status update-geodata.service -l
 ```
 
 ---
@@ -325,6 +370,7 @@ sudo systemctl start update-geodata.service
 | `/etc/systemd/system/update-subs.timer` | 644 | systemd timer |
 | `/usr/local/etc/dae/sublist` | 600 | Subscription URL list |
 | `/usr/local/etc/dae/*.sub` | 600 | Downloaded subscriptions |
+| `/usr/local/etc/dae/backup/*.sub.*` | 600 | Subscription backups (timestamped) |
 
 ### GeoData Update Files
 | File Path | Permissions | Description |
@@ -334,7 +380,6 @@ sudo systemctl start update-geodata.service
 | `/etc/systemd/system/update-geodata.timer` | 644 | systemd timer |
 | `/usr/local/share/dae/geoip.dat` | 644 | GeoIP database |
 | `/usr/local/share/dae/geosite.dat` | 644 | GeoSite database |
-| `/usr/local/share/dae/backup/` | 755 | Backup directory |
 
 ---
 
@@ -350,16 +395,19 @@ sudo systemctl start update-geodata.service
    - Regularly rotate subscription tokens
    - Verify GeoData SHA256 checksums (automatic)
 
-3. **Backup Management**
-   - Subscription: Timestamped backups in `/usr/local/etc/dae/`
-   - GeoData: Last 5 versions in `/usr/local/share/dae/backup/`
-   - Periodically verify backups are valid
+3. **Network Security**
+   - Ensure subscription URLs use HTTPS protocol
+   - Avoid using this script on unsecured networks
+   - Regularly rotate subscription tokens
 
 4. **Log Monitoring**
    ```bash
    # Check for errors in last 7 days
    sudo journalctl -u update-subs.service --since "7 days ago" | grep ERROR
    sudo journalctl -u update-geodata.service --since "7 days ago" | grep ERROR
+   
+   # Check retry patterns
+   sudo journalctl -u update-geodata.service | grep "已重试"
    ```
 
 ---
@@ -384,20 +432,6 @@ sudo rm /usr/local/bin/update-dae-geodata.sh
 sudo systemctl daemon-reload
 ```
 
-### Restore Configurations
-```bash
-# View backups
-ls -la /usr/local/etc/dae/*.backup*
-ls -la /usr/local/share/dae/backup/
-
-# Restore from backup
-LATEST_BACKUP=$(ls -t /usr/local/etc/dae/config.dae.backup.* | head -1)
-sudo cp "$LATEST_BACKUP" /usr/local/etc/dae/config.dae
-
-# Restart Dae
-sudo systemctl restart dae
-```
-
 ---
 
 ## 🤝 Frequently Asked Questions
@@ -412,7 +446,14 @@ A: Prevents service disruption when subscription URLs are blocked or unavailable
 A: Daily is sufficient. These databases update infrequently (weekly to monthly).
 
 **Q: What happens if SHA256 verification fails?**  
-A: The corrupted file is automatically deleted and the old version remains unchanged.
+A: The corrupted file is automatically deleted and old version remains. Script will retry up to 5 times with 10-second intervals.
+
+**Q: Why does download sometimes fail?**  
+A: GitHub may occasionally be slow or rate-limited. The enhanced retry mechanism handles this:
+- 5 retry attempts
+- 10 second delay between retries
+- 120 second timeout per attempt
+- This provides up to 10+ minutes of retry time
 
 **Q: Can I use different data sources for GeoIP/GeoSite?**  
 A: Yes, but you'll need to modify the URLs in `/usr/local/bin/update-dae-geodata.sh`.
@@ -423,8 +464,22 @@ A: No. Dae reload is graceful and doesn't drop existing connections.
 **Q: Can I run on systems without systemd?**  
 A: No. These scripts specifically require systemd. For other init systems, you'd need to adapt the scheduling mechanism.
 
-**Q: How much disk space do backups use?**  
-A: Subscriptions: ~1-10 MB per backup. GeoData: ~10-20 MB per backup (5 versions kept).
+**Q: How much disk space do files use?**  
+A: 
+- GeoData files: ~10-20 MB each (no backups)
+- Subscription files: Varies by subscription size
+- Subscription backups: Kept for last 5 updates
+
+**Q: Why remove backup for GeoData but keep for subscriptions?**  
+A: GeoData files are versioned on GitHub and easily re-downloadable. Subscriptions may change or become unavailable, so backups are valuable.
+
+**Q: Can I adjust the retry settings?**  
+A: Yes, edit `/usr/local/bin/update-dae-geodata.sh` and modify:
+```bash
+CURL_RETRY_TIMES=5      # Number of retries
+CURL_RETRY_DELAY=10     # Seconds between retries
+CURL_TIMEOUT=120        # Total timeout per attempt
+```
 
 ---
 
@@ -454,6 +509,9 @@ If you encounter problems:
    # Timer status
    sudo systemctl status update-subs.timer
    sudo systemctl status update-geodata.timer
+   
+   # Check retry patterns
+   sudo journalctl -u update-geodata.service | grep -E "(重试|retry)"
    ```
 
 2. **Create an Issue**
@@ -461,6 +519,7 @@ If you encounter problems:
    - Provide logs and system information
    - Include configuration (remove sensitive tokens)
    - Describe expected vs actual behavior
+   - Mention if retries are happening
 
 ---
 
@@ -495,6 +554,20 @@ If this project helped you, please consider giving it a star! ⭐
 
 ---
 
-**Last Updated**: 2025-11-25  
-**Version**: 2.0.0  
+## 📋 Changelog
+
+### Version 2.1.0 (2025-11-26)
+- **Enhanced Retry Mechanism**: Increased to 5 retries with 10-second intervals
+- **Extended Timeout**: Total timeout increased to 120 seconds per attempt
+- **Removed Backup**: Simplified GeoData updates (no local backups)
+- **Better Logging**: Added retry configuration output in logs
+- **Fixed Timer**: Corrected OnCalendar to single entry (8:00 AM only)
+
+### Version 2.0.0
+- Initial release with subscription and GeoData auto-update
+
+---
+
+**Last Updated**: 2025-11-26  
+**Version**: 2.1.0  
 **Maintainer**: [@tuoro](https://github.com/tuoro)
