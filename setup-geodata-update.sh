@@ -1,6 +1,52 @@
 #!/bin/bash
 
 #==============================================================================
+# Dae GeoIP/GeoSite 自动更新安装脚本
+# 功能：一键安装更新脚本并配置 systemd 定时任务（每天早上8点执行）
+#==============================================================================
+
+set -e
+
+# 颜色输出
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# 配置变量
+UPDATE_SCRIPT="/usr/local/bin/update-dae-geodata.sh"
+SYSTEMD_SERVICE="/etc/systemd/system/update-geodata.service"
+SYSTEMD_TIMER="/etc/systemd/system/update-geodata.timer"
+
+# 日志函数
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# 检查root权限
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log_error "此脚本需要root权限运行，请使用 sudo 执行"
+        exit 1
+    fi
+}
+
+# 创建更新脚本
+create_update_script() {
+    log_info "创建 GeoIP/GeoSite 更新脚本: $UPDATE_SCRIPT"
+    
+    cat > "$UPDATE_SCRIPT" << 'SCRIPT_EOF'
+#!/bin/bash
+
+#==============================================================================
 # Dae GeoIP/GeoSite 自动更新脚本
 # 功能：自动下载并更新 GeoIP 和 GeoSite 数据库文件
 # 基于：dae-installer 项目拆解
@@ -111,7 +157,6 @@ download_and_verify_file() {
     
     log_info "正在下载 ${name}..."
     log_info "URL: ${url}"
-    log_info "重试配置: ${CURL_RETRY_TIMES} 次，间隔 ${CURL_RETRY_DELAY} 秒"
     log_info "重试配置: ${CURL_RETRY_TIMES} 次，间隔 ${CURL_RETRY_DELAY} 秒"
     
     # 下载数据文件，带有进度条但无详细输出
@@ -269,3 +314,116 @@ main() {
 }
 
 main "$@"
+SCRIPT_EOF
+
+    chmod +x "$UPDATE_SCRIPT"
+    log_info "更新脚本创建完成"
+}
+
+# 创建 systemd service
+create_systemd_service() {
+    log_info "创建 systemd service: $SYSTEMD_SERVICE"
+    
+    cat > "$SYSTEMD_SERVICE" << 'EOF'
+[Unit]
+Description=Update Dae GeoIP and GeoSite databases
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-dae-geodata.sh
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+EOF
+
+    log_info "systemd service 文件创建完成"
+}
+
+# 创建 systemd timer（每天早上8点执行）
+create_systemd_timer() {
+    log_info "创建 systemd timer: $SYSTEMD_TIMER"
+    
+    cat > "$SYSTEMD_TIMER" << 'EOF'
+[Unit]
+Description=Daily update of Dae GeoIP and GeoSite databases
+
+[Timer]
+# 每天早上 8:00 执行
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    log_info "systemd timer 文件创建完成（每天早上 08:00 执行）"
+}
+
+# 启动服务
+enable_and_start_timer() {
+    log_info "重载 systemd daemon"
+    systemctl daemon-reload
+    
+    log_info "启用并启动 update-geodata.timer"
+    systemctl enable update-geodata.timer
+    systemctl start update-geodata.timer
+    
+    log_info "检查 timer 状态"
+    systemctl status update-geodata.timer --no-pager || true
+}
+
+# 显示使用说明
+show_usage() {
+    echo ""
+    log_info "=========================================="
+    log_info "安装完成！"
+    log_info "=========================================="
+    echo ""
+    echo -e "${GREEN}定时任务：${NC}每天早上 8:00 自动执行"
+    echo ""
+    echo -e "${GREEN}常用命令：${NC}"
+    echo ""
+    echo -e "  ${YELLOW}# 手动执行一次更新${NC}"
+    echo -e "  sudo systemctl start update-geodata.service"
+    echo ""
+    echo -e "  ${YELLOW}# 查看更新日志${NC}"
+    echo -e "  sudo journalctl -u update-geodata.service -f"
+    echo ""
+    echo -e "  ${YELLOW}# 查看定时器状态${NC}"
+    echo -e "  sudo systemctl status update-geodata.timer"
+    echo ""
+    echo -e "  ${YELLOW}# 查看下次执行时间${NC}"
+    echo -e "  sudo systemctl list-timers update-geodata.timer"
+    echo ""
+    echo -e "  ${YELLOW}# 修改执行时间（编辑后需重载）${NC}"
+    echo -e "  sudo nano /etc/systemd/system/update-geodata.timer"
+    echo -e "  sudo systemctl daemon-reload"
+    echo -e "  sudo systemctl restart update-geodata.timer"
+    echo ""
+    echo -e "${GREEN}数据文件位置：${NC}/usr/local/share/dae/"
+    echo ""
+    echo -e "${YELLOW}提示：${NC}安装脚本 setup-geodata-update.sh 现在可以安全删除"
+    echo ""
+}
+
+# 主函数
+main() {
+    echo ""
+    log_info "=========================================="
+    log_info "Dae GeoIP/GeoSite 自动更新安装向导"
+    log_info "=========================================="
+    echo ""
+    
+    check_root
+    create_update_script
+    create_systemd_service
+    create_systemd_timer
+    enable_and_start_timer
+    show_usage
+    
+    log_info "脚本执行完成！"
+}
+
+main
